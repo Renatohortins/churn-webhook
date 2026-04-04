@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/webhooks/fire",
+      "schedule": "0 7 * * *"
+    }
+  ]
+}
