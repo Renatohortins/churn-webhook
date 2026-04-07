@@ -6,8 +6,8 @@ import { isValidEventType } from '@/lib/webhook-events'
 export async function GET() {
   const { data, error } = await supabase
     .from('webhook_urls')
-    .select('*')
-    .order('id', { ascending: false })
+    .select('id, url, description, event_type, active, "order", delay_seconds, created_at')
+    .order('order', { ascending: true })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)
@@ -38,19 +38,15 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(data, { status: 201 })
 }
 
-// PATCH — atualizar horário, ordem ou delay
+// PATCH — atualizar ordem ou delay
 export async function PATCH(req: NextRequest) {
-  const { id, schedule_time, order, delay_seconds } = await req.json()
+  const { id, order, delay_seconds } = await req.json()
 
   if (!id) {
     return NextResponse.json({ error: 'id obrigatório' }, { status: 400 })
   }
 
   const updateData: any = {}
-
-  if (schedule_time) {
-    updateData.schedule_time = brtToUtc(schedule_time)
-  }
 
   if (typeof order === 'number') {
     updateData.order = order
@@ -84,11 +80,4 @@ export async function DELETE(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
-}
-
-// Converte HH:MM BRT para UTC (BRT = UTC-3)
-function brtToUtc(brt: string): string {
-  const [h, m] = brt.split(':').map(Number)
-  const utcH = (h + 3) % 24
-  return `${String(utcH).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
