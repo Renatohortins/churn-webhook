@@ -3,7 +3,7 @@ import { jwtVerify } from 'jose/jwt/verify'
 
 const SECRET = new TextEncoder().encode(process.env.JWT_SECRET!)
 
-const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/bestfy/webhook']
+const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/bestfy/webhook', '/api/webhooks/fire']
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
