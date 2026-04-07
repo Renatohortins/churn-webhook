@@ -66,8 +66,17 @@ async function fetchActiveToday(): Promise<ActiveCompanyToday[]> {
 // GET — chamado pelo Vercel Cron (07h BRT = 10h UTC e 16h BRT = 19h UTC)
 // Dispara TODOS os webhooks ativos, respeitando a ordem e delays
 export async function GET(req: NextRequest) {
+  // Verifica bypass token (Vercel envia automaticamente) ou Bearer token
+  const bypassToken = req.headers.get('x-vercel-protection-bypass')
   const authHeader = req.headers.get('authorization')
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+  const cronSecret = process.env.CRON_SECRET
+
+  const isAuthorized =
+    (bypassToken && bypassSecret && bypassToken === bypassSecret) ||
+    (authHeader && cronSecret && authHeader === `Bearer ${cronSecret}`)
+
+  if (!isAuthorized) {
     return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
   }
 
