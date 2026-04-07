@@ -2,13 +2,17 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { WEBHOOK_EVENT_TYPES } from '@/lib/webhook-events'
 
 interface WebhookUrl {
   id: number
   url: string
   description: string | null
+  event_type: string
   active: boolean
   created_at: string
+  order: number
+  delay_seconds: number
 }
 
 interface InactiveData {
@@ -22,11 +26,14 @@ export default function Home() {
   const [inactive, setInactive] = useState<InactiveData | null>(null)
   const [newUrl, setNewUrl] = useState('')
   const [newDesc, setNewDesc] = useState('')
+  const [newEventType, setNewEventType] = useState('empresa_inativa')
   const [firing, setFiring] = useState(false)
   const [fireResult, setFireResult] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [fireHourBrt, setFireHourBrt] = useState(4)
   const [savingTime, setSavingTime] = useState(false)
+  const [resendingId, setResendingId] = useState<number | null>(null)
+  const [resendResult, setResendResult] = useState<string | null>(null)
   const router = useRouter()
 
   useEffect(() => { loadData() }, [])
@@ -54,10 +61,11 @@ export default function Home() {
     await fetch('/api/webhooks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: newUrl, description: newDesc || null }),
+      body: JSON.stringify({ url: newUrl, description: newDesc || null, event_type: newEventType }),
     })
     setNewUrl('')
     setNewDesc('')
+    setNewEventType('empresa_inativa')
     loadData()
   }
 
@@ -66,6 +74,54 @@ export default function Home() {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id }),
+    })
+    loadData()
+  }
+
+  async function resendWebhook(id: number) {
+    setResendingId(id)
+    setResendResult(null)
+    const res = await fetch(`/api/webhooks/${id}/fire`, { method: 'POST' })
+    const data = await res.json()
+    if (res.ok) {
+      setResendResult(`✓ ${data.sent}/${data.batches} lotes enviados | ${data.companies} empresas`)
+    } else {
+      setResendResult(`✗ Erro: ${data.error}`)
+    }
+    setResendingId(null)
+  }
+
+  async function moveWebhook(id: number, direction: 'up' | 'down') {
+    const url = urls.find(u => u.id === id)
+    if (!url) return
+
+    const otherUrl = direction === 'up'
+      ? urls.find(u => u.order === url.order - 1)
+      : urls.find(u => u.order === url.order + 1)
+
+    if (!otherUrl) return
+
+    // Troca a ordem entre os dois
+    await Promise.all([
+      fetch('/api/webhooks', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: url.id, order: otherUrl.order }),
+      }),
+      fetch('/api/webhooks', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: otherUrl.id, order: url.order }),
+      }),
+    ])
+    loadData()
+  }
+
+  async function updateDelay(id: number, delay: number) {
+    await fetch('/api/webhooks', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, delay_seconds: delay }),
     })
     loadData()
   }
@@ -86,7 +142,14 @@ export default function Home() {
     const res = await fetch('/api/webhooks/fire', { method: 'POST' })
     const data = await res.json()
     if (res.ok) {
-      setFireResult(`Enviados: ${data.webhooks_sent} | Falhas: ${data.webhooks_failed} | Empresas: ${data.companies}`)
+      // Processa múltiplos tipos de eventos
+      const summary = data.results
+        .map((r: any) => {
+          if (r.error) return `${r.event_type}: ERRO - ${r.error}`
+          return `${r.event_type}: ${r.webhooks_sent} enviados, ${r.webhooks_failed} falhas, ${r.companies} empresas`
+        })
+        .join(' | ')
+      setFireResult(summary)
     } else {
       setFireResult(`Erro: ${data.error}`)
     }
@@ -186,6 +249,9 @@ export default function Home() {
       {/* URLs de webhook */}
       <div style={s.section}>
         <h2 style={s.sectionTitle}>URLs de Webhook</h2>
+        <p style={{ color: '#888', fontSize: 14, marginBottom: 12 }}>
+          Cadastre URLs para receber eventos de webhook. Cada URL pode ser configurada para um tipo de evento específico.
+        </p>
         <div style={s.row}>
           <input
             style={{ ...s.input, flex: 2 }}
@@ -201,18 +267,111 @@ export default function Home() {
           />
           <button style={s.btn} onClick={addUrl}>Adicionar</button>
         </div>
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: 'block', color: '#ccc', fontSize: 13, marginBottom: 6, fontWeight: 500 }}>
+            Tipo de Evento
+          </label>
+          <select
+            style={{ ...s.input, width: '100%' }}
+            value={newEventType}
+            onChange={e => setNewEventType(e.target.value)}
+          >
+            {WEBHOOK_EVENT_TYPES.map(t => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+          <p style={{ color: '#666', fontSize: 12, marginTop: 4 }}>
+            {WEBHOOK_EVENT_TYPES.find(t => t.value === newEventType)?.description}
+          </p>
+        </div>
         {urls.length === 0 ? (
           <p style={{ color: '#666', fontSize: 14 }}>Nenhuma URL cadastrada.</p>
         ) : (
-          urls.map(u => (
-            <div key={u.id} style={s.urlItem}>
-              <div>
-                <div style={{ fontSize: 14 }}>{u.url}</div>
-                {u.description && <div style={{ fontSize: 12, color: '#888' }}>{u.description}</div>}
-              </div>
-              <button style={s.btnDanger} onClick={() => removeUrl(u.id)}>Remover</button>
-            </div>
-          ))
+          <div>
+            <p style={{ color: '#888', fontSize: 12, marginBottom: 12 }}>
+              💡 Dica: Arraste ou use os botões para definir a ordem de disparo. Configure o delay (segundos) entre cada webhook.
+            </p>
+            {urls
+              .sort((a, b) => a.order - b.order)
+              .map((u, idx) => {
+                const eventTypeInfo = WEBHOOK_EVENT_TYPES.find(t => t.value === u.event_type)
+                const isResending = resendingId === u.id
+                const isFirst = idx === 0
+                const isLast = idx === urls.length - 1
+                return (
+                  <div key={u.id}>
+                    <div style={{ ...s.urlItem, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1, marginBottom: 8 }}>
+                        <div style={{ background: '#2563eb', color: '#fff', width: 28, height: 28, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600 }}>
+                          {idx + 1}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 14 }}>{u.url}</div>
+                          {u.description && <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>{u.description}</div>}
+                          <div style={{ marginTop: 6 }}>
+                            <span style={{ background: '#1e3a5f', color: '#60a5fa', padding: '4px 10px', borderRadius: 4, fontSize: 12, fontWeight: 600 }}>
+                              {eventTypeInfo?.label || u.event_type}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ width: '100%', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 8 }}>
+                        <div>
+                          <label style={{ display: 'block', color: '#ccc', fontSize: 11, marginBottom: 4, fontWeight: 500 }}>
+                            Delay (segundos)
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="300"
+                            value={u.delay_seconds}
+                            onChange={e => updateDelay(u.id, parseInt(e.target.value) || 0)}
+                            style={{ ...s.input, width: '100%', fontSize: 13, padding: '8px 10px' }}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
+                          <button
+                            style={{ ...s.btn, flex: 1, opacity: isFirst ? 0.3 : 1, background: '#6366f1' }}
+                            onClick={() => moveWebhook(u.id, 'up')}
+                            disabled={isFirst}
+                            title="Mover para cima"
+                          >
+                            ↑ Acima
+                          </button>
+                          <button
+                            style={{ ...s.btn, flex: 1, opacity: isLast ? 0.3 : 1, background: '#6366f1' }}
+                            onClick={() => moveWebhook(u.id, 'down')}
+                            disabled={isLast}
+                            title="Mover para baixo"
+                          >
+                            ↓ Abaixo
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ width: '100%', display: 'flex', gap: 8 }}>
+                        <button
+                          style={{ ...s.btn, flex: 1, opacity: isResending ? 0.6 : 1, background: '#10b981' }}
+                          onClick={() => resendWebhook(u.id)}
+                          disabled={isResending}
+                        >
+                          {isResending ? 'Reenviando...' : 'Reenviar'}
+                        </button>
+                        <button style={{ ...s.btnDanger, flex: 1 }} onClick={() => removeUrl(u.id)}>
+                          Remover
+                        </button>
+                      </div>
+                    </div>
+                    {resendingId === u.id && resendResult && (
+                      <div style={{ ...s.alert, marginTop: 8, marginBottom: 12 }}>
+                        {resendResult}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+          </div>
         )}
       </div>
 
