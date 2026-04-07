@@ -66,9 +66,9 @@ async function fetchActiveToday(): Promise<ActiveCompanyToday[]> {
 // POST — dispara webhook de uma URL específica
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: any
 ) {
-  const webhookId = parseInt(params.id)
+  const webhookId = parseInt(context.params.id)
 
   if (!webhookId) {
     return NextResponse.json({ error: 'ID do webhook inválido' }, { status: 400 })
